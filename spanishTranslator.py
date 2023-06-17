@@ -84,7 +84,7 @@ def readLangs(lang1, lang2, reverse=False):
     # Read the file and split into lines
 
     # Using readlines()
-    file1 = open('spashort.txt', 'r', encoding="utf8")
+    file1 = open('spa.txt', 'r', encoding="utf8")
     lines = file1.readlines()
     count = 0
     # Strips the newline character
@@ -335,10 +335,10 @@ def indexesFromSentence(lang, sentence):
     for tword in sentence.split(' '):
         if tword not in  lang.word2index:
             newSentence = sentence.replace(tword, ".")
-            print("UNKOWN")
+            print("UNKNOWN: ", tword)
+            print("Ignore following output and try another sentence")
+            return []
 
-
-    
     return [lang.word2index[word] for word in newSentence.split(' ')]
 
 
@@ -597,7 +597,7 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
 def evaluateRandomly(encoder, decoder, n=20):
     tempSentence = ""
     while tempSentence != "-1":
-        tempSentence = input('Enter a sentence to translate: ')
+        tempSentence = input('Enter a sentence to translate (-1 to exit): ')
         print('>', tempSentence)
         output_words, attentions = evaluate(encoder, decoder, tempSentence)
         output_sentence = ' '.join(output_words)
@@ -629,7 +629,7 @@ encoder = EncoderRNN(input_lang.n_words, hidden_size).to(device)
 attn_decoder = AttnDecoderRNN(hidden_size, output_lang.n_words, dropout_p=0.1).to(device)
 
 #Change this if you want more sample sentences for system to train with. 
-trainIters(encoder, attn_decoder, 10000, print_every=500)
+trainIters(encoder, attn_decoder, 23000, print_every=500)
 
 ######################################################################
 
