@@ -19,6 +19,32 @@ import torch.nn.functional as F
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+###################################################################
+#
+# Making connection to our neo4j database via py2neo
+#
+#
+#
+
+from py2neo import Graph
+from neo4j import GraphDatabase
+# Connect to the Neo4j database
+# Remember to change password to your own when running the program. 
+graph = Graph("bolt://localhost:7687", user="neo4j", password="password")
+
+# Define the Cypher query to retrieve all data
+cypher_query = """
+MATCH (e:English)-[:TRANSLATES_TO]->(s:Spanish)
+RETURN s.word AS spanish_word, e.word AS english_word
+"""
+# Execute the Cypher query and retrieve the results
+results = graph.run(cypher_query).data()
+
+# Print the retrieved data
+for result in results:
+    print(result['spanish_word'], "->", result['english_word'])
+
+
 ######################################################################
 # Unique index per word to use as the inputs and targets of
 # the networks. To keep track we use class Lang
@@ -45,7 +71,7 @@ class Lang:
     def addWord(self, word):
         if word not in self.word2index:
             self.word2index[word] = self.n_words
-            self.word2count[word] = 2 # augmenting this so we get rare words
+            self.word2count[word] = 1 # augmenting this so we get rare words
             self.index2word[self.n_words] = word
             self.n_words += 1
         else:
@@ -84,7 +110,7 @@ def readLangs(lang1, lang2, reverse=False):
     # Read the file and split into lines
 
     # Using readlines()
-    file1 = open('spa.txt', 'r', encoding="utf8")
+    file1 = open('spavshort.txt', 'r', encoding="utf8")
     lines = file1.readlines()
     count = 0
     # Strips the newline character
@@ -118,18 +144,18 @@ def readLangs(lang1, lang2, reverse=False):
 # TRIM FOR EASIER SENTENCES TO DO LESS WORK
 MAX_LENGTH = 10
 
-eng_prefixes = (
-    "i am ", "i m ",
-    "he is", "he s ",
-    "she is", "she s ",
-    "you are", "you re ",
-    "we are", "we re ",
-    "they are", "they re "
-)
+#eng_prefixes = (
+#    "i am ", "i m ",
+#    "he is", "he s ",
+#    "she is", "she s ",
+#    "you are", "you re ",
+#    "we are", "we re ",
+#    "they are", "they re "
+#)
 def filterPair(p):
     return len(p[0].split(' ')) < MAX_LENGTH and \
-        len(p[1].split(' ')) < MAX_LENGTH and \
-        p[1].startswith(eng_prefixes)
+        len(p[1].split(' ')) < MAX_LENGTH# and \
+       #p[1].startswith(eng_prefixes)
 
 def filterPairs(pairs):
     return [pair for pair in pairs if filterPair(pair)]
@@ -173,10 +199,12 @@ print(random.choice(pairs))
 # .. figure:: /_static/img/seq-seq-images/encoder-network.png
 #    :alt:
 #
-#
+# sizes
 
 class EncoderRNN(nn.Module):
     def __init__(self, input_size, hidden_size):
+        print("Encoder ")
+        print(input_size, hidden_size)
         super(EncoderRNN, self).__init__()
         self.hidden_size = hidden_size
 
@@ -222,6 +250,8 @@ class EncoderRNN(nn.Module):
 
 class DecoderRNN(nn.Module):
     def __init__(self, hidden_size, output_size):
+        print("Decoder ")
+        print(hidden_size, output_size)
         super(DecoderRNN, self).__init__()
         self.hidden_size = hidden_size
 
@@ -276,10 +306,13 @@ class DecoderRNN(nn.Module):
 # .. figure:: /_static/img/seq-seq-images/attention-decoder-network.png
 #    :alt:
 #
-#
+# sizes
 
 class AttnDecoderRNN(nn.Module):
     def __init__(self, hidden_size, output_size, dropout_p=0.1, max_length=MAX_LENGTH):
+        print("Att Decoder ")
+        print(hidden_size, output_size)
+        
         super(AttnDecoderRNN, self).__init__()
         self.hidden_size = hidden_size
         self.output_size = output_size
@@ -626,12 +659,12 @@ def evaluateRandomly(encoder, decoder, n=20):
 
 hidden_size = 256
 encoder = EncoderRNN(input_lang.n_words, hidden_size).to(device)
-attn_decoder = AttnDecoderRNN(hidden_size, output_lang.n_words, dropout_p=0.1).to(device)
+attn_decoder =  AttnDecoderRNN(hidden_size, output_lang.n_words, dropout_p=0.1).to(device)
 
 #Change this if you want more sample sentences for system to train with. 
-trainIters(encoder, attn_decoder, 23000, print_every=500)
+trainIters(encoder, attn_decoder, 2000, print_every=500)
 
-######################################################################
+###################################################################### 20 -25 lines.  most used words semantics? and !?, .code only knows a few words in vocab. size of encoder, decoder, attention when using partial or all docs
 
 evaluateRandomly(encoder, attn_decoder)
 
