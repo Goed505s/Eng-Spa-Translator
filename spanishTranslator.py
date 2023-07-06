@@ -4,6 +4,7 @@ Translation with a Sequence to Sequence Network and Attention
 Author: Eddie Gomez
 Inspired by Sean Robertson <https://github.com/spro>`_
 """
+import numpy as np
 from io import open
 import unicodedata
 import string
@@ -19,12 +20,22 @@ import torch.nn.functional as F
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+
+from torch.optim import Adam
+#https://torchkge.readthedocs.io/en/latest/
+from torchkge.models.bilinear import ComplExModel
+from torchkge.models.deep import ConvKBModel
+from torchkge.sampling import BernoulliNegativeSampler
+from torchkge.utils import MarginLoss, DataLoader
+from tqdm.autonotebook import tqdm
+import pandas as pd
+
 ###################################################################
 #
 # Making connection to our neo4j database via py2neo
 #
 #
-#
+#https://medium.com/stanford-cs224w/simple-schemes-for-knowledge-graph-embedding-dd07c61f3267
 
 from py2neo import Graph
 from neo4j import GraphDatabase
@@ -34,17 +45,122 @@ graph = Graph("bolt://localhost:7687", user="neo4j", password="password")
 
 # Define the Cypher query to retrieve all data
 cypher_query = """
-MATCH (e:English)-[:TRANSLATES_TO]->(s:Spanish)
-RETURN s.word AS spanish_word, e.word AS english_word
+MATCH (e:English)-[r:TRANSLATES_TO]->(s:Spanish)
+RETURN s.word AS spanish_word, e.word AS english_word, TYPE(r) AS relationship
 """
-# Execute the Cypher query and retrieve the results
+## Execute the Cypher query and retrieve the results
 results = graph.run(cypher_query).data()
+#
+head1 = [row['spanish_word'] for row in results]
+relation1 = [row['relationship'] for row in results]
+tail1 = [row['english_word'] for row in results]
+
 
 # Print the retrieved data
+count = 1
 for result in results:
-    print(result['spanish_word'], "->", result['english_word'])
+    print(count, " ", result['spanish_word'], " ", result['relationship'], " ", result['english_word'])
+    count= count + 1
 
 
+
+entities = [word for pair in zip(head1, tail1) for word in pair]
+
+relations = relation1
+
+#enumerating for our knowledge embeddings
+entity2idx = {entity: idx for idx, entity in enumerate(entities)}
+relation2idx = {relation1: idx for idx, relation1 in enumerate(relations)}
+
+# Convert data to numerical form
+train_data = [(entity2idx[h], relation2idx[r], entity2idx[t]) for h, r, t in zip(head1, relation1, tail1)]
+
+## Read into Torchkg for our knowledge embedding
+# TransE Model
+class TransE(nn.Module):
+    def __init__(self, num_entities, num_relations, embedding_dim):
+        super(TransE, self).__init__()
+        self.entity_embeddings = nn.Embedding(num_entities, embedding_dim)
+        self.relation_embeddings = nn.Embedding(num_relations, embedding_dim)
+
+    def forward(self, head, relation, tail):
+        h = self.entity_embeddings(head)
+        r = self.relation_embeddings(relation)
+        t = self.entity_embeddings(tail)
+        score = torch.norm(h + r - t, p=2, dim=1)
+        return score
+    
+# Instantiate the model and define the loss function
+num_entities = len(entities)
+num_relations = len(relations)
+embedding_dim = 50
+
+model = TransE(num_entities, num_relations, embedding_dim)
+criterion = nn.MarginRankingLoss(margin=1.0)
+optimizer = optim.Adam(model.parameters(), lr=0.01)
+
+
+
+
+# Training loop
+num_epochs = 10
+
+for epoch in range(num_epochs):
+    total_loss = 0.0
+    np.random.shuffle(train_data)
+
+    for head, relation, tail in train_data:
+        optimizer.zero_grad()
+
+        positive_score = model.forward(torch.LongTensor([head]), torch.LongTensor([relation]), torch.LongTensor([tail]))
+
+        corrupted_tail = np.random.choice(num_entities, size=1)[0]
+        negative_score = model.forward(torch.LongTensor([head]), torch.LongTensor([relation]), torch.LongTensor([corrupted_tail]))
+
+        target = torch.tensor([-1])  # Negative target score
+        loss = criterion(positive_score, negative_score, target)
+        total_loss += loss.item()
+        loss.backward()
+        optimizer.step()
+
+    if (epoch + 1) % 10 == 0:
+        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {total_loss:.4f}")
+
+# Step 5: Retrieve the learned embeddings
+entity_embeddings = model.entity_embeddings.weight.data.numpy()
+
+# Print the learned embeddings
+for entity, idx in entity2idx.items():
+    print(idx, entity)
+print("----------------------")
+while True:
+    user_input = input("Enter a word in Spanish (or 'exit' to quit): ")
+    if user_input.lower() == "exit":
+        break
+
+    # Convert user input to numerical form
+    if user_input in entity2idx:
+        spanish_idx = entity2idx[user_input]
+        spanish_tensor = torch.LongTensor([spanish_idx])
+
+        # Retrieve the embedding for the user input
+        spanish_embedding = model.entity_embeddings(spanish_tensor)
+
+        # Calculate distances between the user input embedding and all English entity embeddings
+        distances = torch.norm(spanish_embedding - model.entity_embeddings.weight.data, p=2, dim=1)
+        # Exclude the input Spanish word from consideration by setting its distance to a large value
+        distances[spanish_idx] = float('inf')
+
+        # Find the index of the closest English embedding
+        closest_idx = torch.argmin(distances)
+
+        # Retrieve the corresponding English word from entity2idx dictionary
+        english_word = list(entity2idx.keys())[list(entity2idx.values()).index(closest_idx)]
+
+        print(f"The corresponding English word for '{user_input}' is '{english_word}'.")
+    else:
+        print("Word not found in the vocabulary.")
+#torchKGData = KnowledgeGraph(df=data)
 ######################################################################
 # Unique index per word to use as the inputs and targets of
 # the networks. To keep track we use class Lang
